@@ -2,64 +2,68 @@
 const OpenAI = require("openai");
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 const TIMEFRAMES = ["MN", "W1", "D1", "M30", "M15", "M5", "M1"];
-const MAX_TOTAL_IMAGE_CHARS = 3_500_000;
 
 const ANALYSIS_PROMPT = `
-You are ColloAI, a careful multi-timeframe technical market analyst.
+You are ColloAI, a professional technical market analyst.
 
-Analyze the supplied chart screenshots as evidence, not as guaranteed predictions.
+Analyze the user's uploaded trading-chart screenshots using only
+information genuinely visible in those screenshots.
 
-TRADING METHODS:
-1. Market structure, trends, ranges and swing highs/lows.
-2. SMC: BOS, CHOCH, liquidity sweeps, order blocks and fair value gaps.
-3. ICT: dealing ranges, premium/discount, displacement and liquidity.
-4. Support/resistance and supply/demand.
-5. Fibonacci retracement and extensions only where swing anchors are identifiable.
-6. RSI, MACD, moving averages and other indicators only if visible and readable.
-7. Volume Profile only if actual volume-at-price information is visible.
-8. Order flow only if actual relevant bid/ask, footprint or delta information is available.
-9. Higher-timeframe alignment and lower-timeframe execution evidence.
+The user may upload any ONE or more of these timeframes:
+MN, W1, D1, M30, M15, M5, M1.
 
-TIMEFRAME LOGIC:
-- Scalping: emphasize M15, M5 and M1, using higher timeframes for context.
-- Intraday: emphasize Daily, M30, M15 and lower-timeframe confirmation.
-- Swing: emphasize Monthly, Weekly and Daily structure.
+Analyze only the timeframes supplied. Never claim to have seen a
+timeframe that was not uploaded.
 
-For every method, state its findings and whether evidence is available,
-partial, unavailable or not applicable.
+Examine visible price action, market structure, BOS, CHOCH, liquidity,
+support and resistance, supply and demand, fair value gaps, order
+blocks, Fibonacci levels, candlestick patterns, and indicators when
+they are visible and readable.
 
-Never invent live prices, indicator readings, news, volume data, or
-broker-specific specifications. Distinguish visual estimates from exact
-measurements. Do not claim you checked Investing.com or Barchart unless
-their data was actually supplied or retrieved through a configured source.
+Discuss volume profile, order flow, and other tools only when their
+relevant data is actually visible. Do not invent missing data,
+indicator values, prices, news, or market conditions.
 
-OUTPUT:
-Instrument and selected mode
-Data completeness and screenshot readability
-Higher-timeframe bias
-Lower-timeframe structure
-SMC findings
-ICT findings
-Support/resistance and supply/demand
-Fibonacci analysis, if justified
-Indicators and volume/order-flow availability
-Cross-timeframe agreement and conflicts
-Decision: BUY SETUP, SELL SETUP, WAIT, or INSUFFICIENT DATA
-Entry zone, stop loss, TP1, TP2 and TP3, only if justified
-Invalidation conditions
-Risk-to-reward calculations, only when numerical levels permit
-Alternative scenario
-Risks, uncertainties and missing evidence
+Respect the selected trading style:
+- Scalping: prioritize lower timeframes and precise risk management.
+- Intraday: consider intraday structure and relevant higher-timeframe
+  context when supplied.
+- Swing: prioritize higher-timeframe structure when supplied.
 
-Do not force a trade. If evidence is insufficient or contradictory,
-choose WAIT or INSUFFICIENT DATA. Explain what confirmation is needed.
-Do not invent a win probability or confidence percentage.
+Use higher timeframes for context when available and lower timeframes
+for execution when available. If only one timeframe is supplied,
+clearly state that the analysis has limited context.
 
-End by stating that this is decision support, not a guaranteed signal.
+Return a useful report with these headings:
+
+1. MARKET OVERVIEW
+2. TIMEFRAMES RECEIVED
+3. MARKET STRUCTURE
+4. KEY SUPPORT AND RESISTANCE
+5. LIQUIDITY AND SMC/ICT OBSERVATIONS
+6. INDICATORS AND VOLUME
+7. BUY SCENARIO
+8. SELL SCENARIO
+9. TRADE SETUP, IF JUSTIFIED
+10. INVALIDATION AND RISK MANAGEMENT
+11. FINAL BIAS AND CONFIDENCE
+
+For any proposed trade, specify direction, entry zone, stop loss,
+and take-profit targets only when the screenshot provides enough
+evidence to justify them. Otherwise write "No reliable entry yet"
+and explain what confirmation is needed.
+
+Never guarantee profits. Do not pretend to know the future.
+Explain uncertainty and avoid encouraging excessive leverage.
+The user makes the final trading decision.
+
+Symbol: provided by the user.
+Trading style: provided by the user.
+Current price: use only if supplied by the user.
 `;
 
 module.exports = async function handler(req, res) {
@@ -68,163 +72,200 @@ module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({
-      error: "Use POST to submit chart screenshots."
+      error: "Method not allowed. Send a POST request.",
     });
   }
 
   if (!process.env.OPENAI_API_KEY) {
-    return res.status(503).json({
-      error: "AI is not configured. Add OPENAI_API_KEY in Vercel environment variables."
-    });
-  }
-
-  if (!req.body || typeof req.body !== "object") {
-    return res.status(400).json({
-      error: "Invalid request body."
-    });
-  }
-
-  const { symbol, mode, currentPrice, charts } = req.body;
-
-  if (
-    typeof symbol !== "string" ||
-    !/^[A-Z0-9._-]{2,20}$/.test(symbol) ||
-    !["Scalping", "Intraday", "Swing"].includes(mode)
-  ) {
-    return res.status(400).json({
-      error: "Invalid instrument or trading mode."
-    });
-  }
-
-  if (
-    currentPrice !== null &&
-    currentPrice !== undefined &&
-    (!Number.isFinite(currentPrice) || currentPrice <= 0)
-  ) {
-    return res.status(400).json({
-      error: "Current price must be a positive number or null."
-    });
-if (
-  !Array.isArray(charts) ||
-  charts.length < 1 ||
-  charts.length > TIMEFRAMES.length
-) {
-  return res.status(400).json({
-    error: "Upload at least one valid timeframe screenshot."
-  });
-}
-
-  const seen = new Set();
-  let totalChars = 0;
-
-  for (const chart of charts) {
-    if (
-      !chart ||
-      !TIMEFRAMES.includes(chart.timeframe) ||
-      seen.has(chart.timeframe)
-    ) {
-      return res.status(400).json({
-        error: "Invalid or duplicate timeframe."
-      });
-    }
-
-    seen.add(chart.timeframe);
-
-    if (
-      !["image/png", "image/jpeg", "image/webp"].includes(chart.mimeType) ||
-      typeof chart.dataUrl !== "string"
-    ) {
-      return res.status(400).json({
-        error: "A screenshot has an unsupported image format."
-      });
-    }
-
-    const expectedPrefix = `data:${chart.mimeType};base64,`;
-
-    if (!chart.dataUrl.startsWith(expectedPrefix)) {
-      return res.status(400).json({
-        error: "Invalid screenshot encoding."
-      });
-    }
-
-    const base64 = chart.dataUrl.slice(expectedPrefix.length);
-
-    if (
-      !base64 ||
-      !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)
-    ) {
-      return res.status(400).json({
-        error: "Invalid image data."
-      });
-    }
-
-    totalChars += chart.dataUrl.length;
-  }
-
-  if (totalChars > MAX_TOTAL_IMAGE_CHARS) {
-    return res.status(413).json({
-      error: "Screenshots are too large. Reduce their dimensions and upload again."
-    });
-  }
-
-  const content = [
-    {
-      type: "input_text",
-      text:
-        ANALYSIS_PROMPT +
-        "\nInstrument: " + symbol +
-        "\nTrading mode: " + mode +
-        "\nUser-supplied current price: " +
-        (currentPrice ?? "Not provided") +
-        "\n\nAnalyze these screenshots in the supplied timeframe order."
-    }
-  ];
-
-  for (const chart of charts) {
-    content.push({
-      type: "input_text",
-      text: "The following image is the " + chart.timeframe + " timeframe."
-    });
-
-    content.push({
-      type: "input_image",
-      image_url: chart.dataUrl,
-      detail: "high"
+    return res.status(500).json({
+      error:
+        "The server is missing OPENAI_API_KEY. Add it in Vercel Environment Variables.",
     });
   }
 
   try {
+    const body = req.body || {};
+    const symbol =
+      typeof body.symbol === "string" && body.symbol.trim()
+        ? body.symbol.trim().slice(0, 30)
+        : "Unknown symbol";
+
+    const mode =
+      typeof body.mode === "string" && body.mode.trim()
+        ? body.mode.trim().slice(0, 50)
+        : "Intraday";
+
+    const currentPrice = body.currentPrice;
+    const charts = body.charts;
+
+    if (
+      currentPrice !== null &&
+      currentPrice !== undefined &&
+      currentPrice !== "" &&
+      (!Number.isFinite(Number(currentPrice)) ||
+        Number(currentPrice) <= 0)
+    ) {
+      return res.status(400).json({
+        error: "Current price must be a positive number or empty.",
+      });
+    }
+
+    if (
+      !Array.isArray(charts) ||
+      charts.length < 1 ||
+      charts.length > TIMEFRAMES.length
+    ) {
+      return res.status(400).json({
+        error: "Upload between 1 and 7 chart screenshots.",
+      });
+    }
+
+    const seenTimeframes = new Set();
+    const imageInputs = [];
+
+    for (const chart of charts) {
+      if (!chart || typeof chart !== "object") {
+        return res.status(400).json({
+          error: "One of the uploaded chart entries is invalid.",
+        });
+      }
+
+      const timeframe = String(chart.timeframe || "").toUpperCase();
+
+      if (!TIMEFRAMES.includes(timeframe)) {
+        return res.status(400).json({
+          error: `Invalid timeframe: ${timeframe || "missing"}.`,
+        });
+      }
+
+      if (seenTimeframes.has(timeframe)) {
+        return res.status(400).json({
+          error: `You uploaded the ${timeframe} timeframe more than once.`,
+        });
+      }
+
+      seenTimeframes.add(timeframe);
+
+      if (
+        typeof chart.image !== "string" ||
+        !chart.image.startsWith("data:image/")
+      ) {
+        return res.status(400).json({
+          error: `The ${timeframe} screenshot is missing or invalid.`,
+        });
+      }
+
+      const match = chart.image.match(
+        /^data:image\/(jpeg|jpg|png|webp);base64,([A-Za-z0-9+/=\s]+)$/
+      );
+
+      if (!match) {
+        return res.status(400).json({
+          error: `The ${timeframe} image must be JPEG, PNG, or WebP.`,
+        });
+      }
+
+      const imageBytes = Buffer.from(match[2], "base64");
+
+      if (imageBytes.length === 0 || imageBytes.length > 2_000_000) {
+        return res.status(400).json({
+          error: `The ${timeframe} screenshot must be under 2 MB after compression.`,
+        });
+      }
+
+      const mimeType =
+        match[1] === "jpg" ? "jpeg" : match[1];
+
+      imageInputs.push({
+        type: "input_text",
+        text: `Screenshot timeframe: ${timeframe}`,
+      });
+
+      imageInputs.push({
+        type: "input_image",
+        image_url: `data:image/${mimeType};base64,${match[2]}`,
+        detail: "high",
+      });
+    }
+
+    const priceText =
+      currentPrice !== null &&
+      currentPrice !== undefined &&
+      currentPrice !== ""
+        ? String(Number(currentPrice))
+        : "Not supplied";
+
+    const userContent = [
+      {
+        type: "input_text",
+        text:
+          `Analyze symbol: ${symbol}\n` +
+          `Trading style: ${mode}\n` +
+          `User-supplied current price: ${priceText}\n` +
+          `Number of screenshots: ${charts.length}\n` +
+          `Analyze only the screenshots included in this request.`,
+      },
+      ...imageInputs,
+    ];
+
     const response = await client.responses.create({
       model: process.env.OPENAI_MODEL || "gpt-4.1-mini",
+      instructions: ANALYSIS_PROMPT,
       input: [
         {
           role: "user",
-          content
-        }
+          content: userContent,
+        },
       ],
-      max_output_tokens: 3500
+      max_output_tokens: 2500,
     });
 
     const report = response.output_text;
 
     if (!report || !report.trim()) {
       return res.status(502).json({
-        error: "The AI returned no analysis. Please retry."
+        error: "The AI returned an empty report. Please try again.",
       });
     }
 
     return res.status(200).json({
-      report,
+      success: true,
       symbol,
       mode,
-      analyzedTimeframes: TIMEFRAMES,
-      timestamp: new Date().toISOString()
+      analyzedTimeframes: charts.map((chart) =>
+        String(chart.timeframe).toUpperCase()
+      ),
+      report: report.trim(),
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error("ColloAI analysis request failed:", error.message);
+    console.error("ColloAI analysis error:", error);
 
-    return res.status(502).json({
-      error: "The AI analysis request failed. Check API access, model configuration and billing, then retry."
+    if (error.status === 401) {
+      return res.status(502).json({
+        error:
+          "OpenAI rejected the API key. Check OPENAI_API_KEY in Vercel.",
+      });
+    }
+
+    if (error.status === 429) {
+      return res.status(502).json({
+        error:
+          "The AI API quota may be exhausted or rate-limited. Check your OpenAI API billing and usage.",
+      });
+    }
+
+    if (error.status === 400) {
+      return res.status(502).json({
+        error:
+          "The AI API rejected the request. Check the screenshot format and API configuration.",
+      });
+    }
+
+    return res.status(500).json({
+      error:
+        "The analysis server encountered an error. Check the Vercel Function Logs for details.",
     });
   }
 };
+
