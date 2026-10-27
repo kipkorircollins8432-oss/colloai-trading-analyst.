@@ -104,13 +104,15 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({
       error: "Current price must be a positive number or null."
     });
-  }
-
-  if (!Array.isArray(charts) || charts.length !== TIMEFRAMES.length) {
-    return res.status(400).json({
-      error: "Submit exactly seven timeframe screenshots."
-    });
-  }
+if (
+  !Array.isArray(charts) ||
+  charts.length < 1 ||
+  charts.length > TIMEFRAMES.length
+) {
+  return res.status(400).json({
+    error: "Upload at least one valid timeframe screenshot."
+  });
+}
 
   const seen = new Set();
   let totalChars = 0;
