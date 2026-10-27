@@ -1,0 +1,13 @@
+
+{
+  "name": "colloai-trading-analyst",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-timeframe AI-assisted trading analysis",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "openai": "^5.20.0"
+  }
+}
