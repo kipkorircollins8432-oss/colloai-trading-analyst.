@@ -2,454 +2,325 @@
 "use strict";
 
 (() => {
-  const TIMEFRAMES = [
-    { code: "MN", label: "Monthly" },
-    { code: "W1", label: "Weekly" },
-    { code: "D1", label: "Daily" },
-    { code: "M30", label: "30 Minutes" },
-    { code: "M15", label: "15 Minutes" },
-    { code: "M5", label: "5 Minutes" },
-    { code: "M1", label: "1 Minute" }
+  const TFS = [
+    ["MN", "Monthly"], ["W1", "Weekly"], ["D1", "Daily"],
+    ["M30", "30 Minutes"], ["M15", "15 Minutes"],
+    ["M5", "5 Minutes"], ["M1", "1 Minute"]
   ];
-
   const MAX_FILES = 7;
-  const MAX_FILE_SIZE = 8 * 1024 * 1024;
-  const MAX_TOTAL_IMAGE_CHARS = 3000000;
+  const MAX_SIZE = 8 * 1024 * 1024;
   const HISTORY_KEY = "colloai_reports_v2";
-
-  let selectedFiles = [];
+  let files = [];
   let busy = false;
-  let objectUrls = [];
 
-  const $ = (selectors, root = document) => {
-    for (const selector of selectors) {
-      const found = root.querySelector(selector);
-      if (found) return found;
+  const $ = (s, root = document) => {
+    for (const selector of s) {
+      const el = root.querySelector(selector);
+      if (el) return el;
     }
     return null;
   };
 
-  function findFileInput() {
-    return $([
-      "#chartFiles",
-      "#screenshots",
-      "#chartScreenshots",
-      "#imageUpload",
-      'input[type="file"]'
-    ]);
+  const input = () => $([
+    "#chartFiles", "#screenshots", "#chartScreenshots",
+    "#imageUpload", 'input[type="file"]'
+  ]);
+
+  const controls = () => ({
+    symbol: $(["#symbol", "#instrument", '[name="symbol"]']),
+    mode: $(["#mode", "#tradingStyle", "#tradingMode", '[name="mode"]']),
+    price: $(["#currentPrice", "#price", '[name="currentPrice"]'])
+  });
+
+  function el(tag, text = "", cls = "") {
+    const node = document.createElement(tag);
+    node.textContent = text;
+    if (cls) node.className = cls;
+    return node;
   }
 
-  function getControls() {
-    return {
-      symbol: $([
-        "#symbol", "#instrument",
-        '[name="symbol"]', '[name="instrument"]'
-      ]),
-      mode: $([
-        "#mode", "#tradingStyle", "#tradingMode",
-        '[name="mode"]', '[name="tradingStyle"]'
-      ]),
-      price: $([
-        "#currentPrice", "#price", '[name="currentPrice"]'
-      ])
-    };
-  }
-
-  function setStatus(message, type = "") {
-    let element = document.getElementById("colloai-upload-status");
-
-    if (!element) {
-      element = document.createElement("div");
-      element.id = "colloai-upload-status";
-      const input = findFileInput();
-      if (input) input.insertAdjacentElement("afterend", element);
-      else document.body.prepend(element);
+  function status(message, type = "") {
+    let node = document.getElementById("colloai-upload-status");
+    if (!node) {
+      node = el("div");
+      node.id = "colloai-upload-status";
+      const fileInput = input();
+      if (fileInput) fileInput.insertAdjacentElement("afterend", node);
+      else document.body.prepend(node);
     }
-
-    element.textContent = message;
-    element.className = type ? `colloai-${type}` : "";
-    element.setAttribute("role", "status");
+    node.textContent = message;
+    node.className = type ? `colloai-${type}` : "";
+    node.setAttribute("role", "status");
   }
 
-  function getFileList() {
-    let list = document.getElementById("colloai-file-list");
-
-    if (!list) {
-      list = document.createElement("div");
-      list.id = "colloai-file-list";
-      const status = document.getElementById("colloai-upload-status");
-      const input = findFileInput();
-
-      if (status) status.insertAdjacentElement("afterend", list);
-      else if (input) input.insertAdjacentElement("afterend", list);
+  function fileList() {
+    let node = document.getElementById("colloai-file-list");
+    if (!node) {
+      node = el("div");
+      node.id = "colloai-file-list";
+      const s = document.getElementById("colloai-upload-status");
+      if (s) s.insertAdjacentElement("afterend", node);
+      else if (input()) input().insertAdjacentElement("afterend", node);
     }
-
-    return list;
+    return node;
   }
 
-  function getReport() {
-    let report = document.getElementById("colloai-report");
-
-    if (!report) {
-      report = document.createElement("section");
-      report.id = "colloai-report";
-      report.hidden = true;
-      getFileList().insertAdjacentElement("afterend", report);
+  function reportBox() {
+    let node = document.getElementById("colloai-report");
+    if (!node) {
+      node = el("section");
+      node.id = "colloai-report";
+      node.hidden = true;
+      fileList().insertAdjacentElement("afterend", node);
     }
-
-    return report;
+    return node;
   }
 
-  function addStyles() {
+  function styles() {
     if (document.getElementById("colloai-runtime-styles")) return;
-
-    const style = document.createElement("style");
+    const style = el("style");
     style.id = "colloai-runtime-styles";
     style.textContent = `
-      #colloai-file-list {
-        display:grid;
-        grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
-        gap:14px;
-        margin:18px 0;
-      }
-      .colloai-file-card {
-        min-width:0;padding:12px;border:1px solid #394257;
-        border-radius:12px;background:#101727;color:#f4f6fb;
-      }
-      .colloai-file-card img {
-        display:block;width:100%;max-height:220px;object-fit:contain;
-        margin:10px 0;border-radius:8px;background:#080d17;
-      }
-      .colloai-file-card select {
-        display:block;width:100%;padding:10px;margin:8px 0;
-        color:inherit;background:#080d17;border:1px solid #59647b;
-        border-radius:8px;
-      }
-      .colloai-file-name { overflow-wrap:anywhere;font-size:13px;color:#c6ccda; }
-      .colloai-remove { padding:8px 12px;border:1px solid #b65c65;
-        border-radius:8px;color:#ffd8dc;background:#351c27; }
-      #colloai-upload-status { margin:12px 0;line-height:1.6; }
-      #colloai-report { margin-top:24px;padding:18px;border:1px solid #394257;
-        border-radius:12px;background:#101727;color:#f4f6fb;line-height:1.7;
-        overflow-wrap:anywhere; }
-      #colloai-report pre { white-space:pre-wrap;overflow-wrap:anywhere;font:inherit; }
-      #colloai-report button { margin:10px 8px 0 0;padding:10px 14px;border-radius:8px; }
-      .colloai-muted { color:#aab3c5; }
-      .colloai-error { color:#ff9999; }
-      .colloai-success { color:#8fe3b0; }
+      #colloai-file-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:18px 0}
+      .colloai-file-card{min-width:0;padding:12px;border:1px solid #394257;border-radius:12px;background:#101727;color:#f4f6fb}
+      .colloai-file-card img{display:block;width:100%;max-height:220px;object-fit:contain;margin:10px 0;border-radius:8px;background:#080d17}
+      .colloai-file-card select{width:100%;padding:10px;margin:8px 0;color:inherit;background:#080d17;border:1px solid #59647b;border-radius:8px}
+      .colloai-file-name{overflow-wrap:anywhere;font-size:13px;color:#c6ccda}
+      .colloai-remove{padding:8px 12px;border:1px solid #b65c65;border-radius:8px;color:#ffd8dc;background:#351c27}
+      #colloai-upload-status{margin:12px 0;line-height:1.6}
+      #colloai-report{margin-top:24px;padding:18px;border:1px solid #394257;border-radius:12px;background:#101727;color:#f4f6fb;line-height:1.7;overflow-wrap:anywhere}
+      #colloai-report pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+      #colloai-report button{margin:10px 8px 0 0;padding:10px 14px;border-radius:8px}
+      .colloai-muted{color:#aab3c5}.colloai-error{color:#ff9999}.colloai-success{color:#8fe3b0}
     `;
     document.head.appendChild(style);
   }
 
-  function readSymbol() {
-    const raw = getControls().symbol?.value?.trim() || "XAUUSD";
+  function symbol() {
+    const raw = controls().symbol?.value?.trim() || "XAUUSD";
     const value = raw.replace(/\s*[—–-]\s*.*/, "")
       .replace(/[^a-zA-Z0-9._-]/g, "").toUpperCase();
     return /^[A-Z0-9._-]{2,20}$/.test(value) ? value : "XAUUSD";
   }
 
-  function readMode() {
-    const raw = (getControls().mode?.value || "Intraday").toLowerCase();
+  function mode() {
+    const raw = (controls().mode?.value || "Intraday").toLowerCase();
     if (raw.includes("scalp")) return "Scalping";
     if (raw.includes("swing")) return "Swing";
     return "Intraday";
   }
 
-  function readPrice() {
-    const value = getControls().price?.value?.trim();
+  function price() {
+    const value = controls().price?.value?.trim();
     if (!value) return null;
-    const number = Number(value);
-    return Number.isFinite(number) && number > 0 ? number : null;
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
   }
 
-  function makeElement(tag, text = "", className = "") {
-    const element = document.createElement(tag);
-    element.textContent = text;
-    if (className) element.className = className;
-    return element;
+  // Read the original file bytes without decoding or canvas compression.
+  // This avoids the browser image-decoding failure seen on some phones.
+  function readOriginal(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+
+      reader.onload = () => {
+        const dataUrl = reader.result;
+        if (typeof dataUrl !== "string" ||
+            !/^data:image\/(jpeg|jpg|png|webp);base64,/i.test(dataUrl)) {
+          reject(new Error(
+            `${file.name}: the file is not a supported JPEG, PNG, or WebP image.`
+          ));
+          return;
+        }
+        resolve(dataUrl);
+      };
+
+      reader.onerror = () => reject(new Error(
+        `Your phone could not read ${file.name}. Please select the file again.`
+      ));
+
+      reader.readAsDataURL(file);
+    });
   }
 
-  function inferTimeframe(filename, used) {
-    const name = filename.toLowerCase();
-    const patterns = [
+  function guessTF(filename, used) {
+    const n = filename.toLowerCase();
+    const rules = [
       [/(monthly|month|\bmn\b|1mo)/, "MN"],
       [/(weekly|week|\bw1\b|1w)/, "W1"],
-      [/(daily|\bday\b|\bd1\b|1d)/, "D1"],
+      [/(daily|\bd1\b|1d)/, "D1"],
       [/(30m|\bm30\b|30min)/, "M30"],
       [/(15m|\bm15\b|15min)/, "M15"],
       [/(5m|\bm5\b|5min)/, "M5"],
       [/(1m|\bm1\b|1min)/, "M1"]
     ];
-
-    for (const [pattern, code] of patterns) {
-      if (pattern.test(name) && !used.has(code)) return code;
+    for (const [pattern, code] of rules) {
+      if (pattern.test(n) && !used.has(code)) return code;
     }
-
-    return TIMEFRAMES.find(item => !used.has(item.code))?.code || "M1";
+    return TFS.find(([code]) => !used.has(code))?.[0] || "M1";
   }
 
-  function renderFiles() {
-    const list = getFileList();
+  function render() {
+    const list = fileList();
     list.replaceChildren();
 
-    // Revoke previous preview URLs to avoid memory leaks.
-    for (const url of objectUrls) URL.revokeObjectURL(url);
-    objectUrls = [];
-
-    if (!selectedFiles.length) {
-      setStatus("No screenshots selected. Upload at least one chart.");
+    if (!files.length) {
+      status("No screenshots selected. Upload at least one chart.");
       return;
     }
 
     const used = new Set();
 
-    selectedFiles.forEach((item, index) => {
-      if (!TIMEFRAMES.some(tf => tf.code === item.timeframe)) {
-        item.timeframe = inferTimeframe(item.file.name, used);
+    files.forEach((item, index) => {
+      if (!TFS.some(([code]) => code === item.tf)) {
+        item.tf = guessTF(item.file.name, used);
       }
-      used.add(item.timeframe);
+      used.add(item.tf);
 
-      const card = makeElement("div", "", "colloai-file-card");
-      card.appendChild(makeElement("strong", `Chart ${index + 1}`));
-      card.appendChild(makeElement("div", item.file.name, "colloai-file-name"));
+      const card = el("div", "", "colloai-file-card");
+      card.append(el("strong", `Chart ${index + 1}`));
+      card.append(el("div", item.file.name, "colloai-file-name"));
 
+      // Preview uses the browser's built-in display support only.
+      // Analysis itself does not depend on preview decoding.
       const preview = document.createElement("img");
-      preview.alt = `Preview of ${item.file.name}`;
+      preview.alt = `Preview: ${item.file.name}`;
+      preview.src = URL.createObjectURL(item.file);
+      item.previewUrl = preview.src;
+      preview.onerror = () => {
+        preview.hidden = true;
+        card.append(el("p", "Preview unavailable; the original file can still be submitted."));
+      };
+      card.append(preview);
 
-      const previewUrl = URL.createObjectURL(item.file);
-      objectUrls.push(previewUrl);
-      preview.src = previewUrl;
-      card.appendChild(preview);
-
-      card.appendChild(makeElement("label", "Timeframe"));
       const select = document.createElement("select");
       select.setAttribute("aria-label", `Timeframe for ${item.file.name}`);
-
-      TIMEFRAMES.forEach(tf => {
-        const option = document.createElement("option");
-        option.value = tf.code;
-        option.textContent = tf.label;
-        option.selected = item.timeframe === tf.code;
-        select.appendChild(option);
+      TFS.forEach(([code, label]) => {
+        const option = el("option", label);
+        option.value = code;
+        option.selected = item.tf === code;
+        select.append(option);
       });
-
       select.addEventListener("change", () => {
-        item.timeframe = select.value;
-        renderFiles();
+        item.tf = select.value;
+        render();
       });
 
-      const remove = makeElement("button", "Remove screenshot", "colloai-remove");
+      const remove = el("button", "Remove screenshot", "colloai-remove");
       remove.type = "button";
       remove.addEventListener("click", () => {
-        selectedFiles = selectedFiles.filter(file => file !== item);
-        renderFiles();
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        files = files.filter(f => f !== item);
+        render();
       });
 
       card.append(select, remove);
-      list.appendChild(card);
+      list.append(card);
     });
 
-    setStatus(
-      `${selectedFiles.length} screenshot(s) selected. Check each timeframe.`,
-      "success"
-    );
+    status(`${files.length} screenshot(s) selected. Check each timeframe.`, "success");
   }
 
-  function acceptFiles(fileList) {
-    const supported = ["image/jpeg", "image/png", "image/webp"];
+  function accept(selected) {
     const errors = [];
-
-    for (const file of Array.from(fileList || [])) {
-      const typeOkay = supported.includes(file.type) ||
+    for (const file of Array.from(selected || [])) {
+      const supported = ["image/jpeg", "image/png", "image/webp"].includes(file.type) ||
         /\.(jpe?g|png|webp)$/i.test(file.name);
 
-      if (!typeOkay) {
-        errors.push(`${file.name}: use JPG, PNG or WebP.`);
+      if (!supported) {
+        errors.push(`${file.name}: select a JPG, PNG or WebP file.`);
         continue;
       }
-
-      if (file.size === 0 || file.size > MAX_FILE_SIZE) {
-        errors.push(`${file.name}: image must be between 1 byte and 8 MB.`);
+      if (!file.size || file.size > MAX_SIZE) {
+        errors.push(`${file.name}: file must be smaller than 8 MB.`);
         continue;
       }
-
-      if (selectedFiles.some(item =>
-        item.file.name === file.name && item.file.size === file.size
-      )) continue;
-
-      if (selectedFiles.length >= MAX_FILES) {
-        errors.push("Maximum seven screenshots allowed.");
+      if (files.some(f => f.file.name === file.name && f.file.size === file.size)) continue;
+      if (files.length >= MAX_FILES) {
+        errors.push("You can upload up to seven screenshots.");
         break;
       }
-
-      selectedFiles.push({ file, timeframe: "" });
+      files.push({ file, tf: "" });
     }
-
-    renderFiles();
-    if (errors.length) setStatus(errors.join(" "), "error");
+    render();
+    if (errors.length) status(errors.join(" "), "error");
   }
 
-  async function decodeImage(file) {
-    // Preferred method: decode the original file directly.
-    if ("createImageBitmap" in window) {
-      try {
-        return await createImageBitmap(file);
-      } catch (error) {
-        console.warn("createImageBitmap failed; trying Image fallback.", error);
-      }
-    }
-
-    // Fallback for browsers that cannot decode with createImageBitmap.
-    return await new Promise((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const image = new Image();
-
-      image.onload = () => {
-        URL.revokeObjectURL(url);
-        if (!image.naturalWidth || !image.naturalHeight) {
-          reject(new Error(`The image ${file.name} has no readable dimensions.`));
-        } else {
-          resolve(image);
-        }
-      };
-
-      image.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error(
-          `Your browser could not decode ${file.name}. Open it in Gallery and save/export it as JPG or PNG, then upload the saved copy.`
-        ));
-      };
-
-      image.src = url;
-    });
-  }
-
-  async function compressImage(file, timeframe) {
-    let image;
-
-    try {
-      image = await decodeImage(file);
-
-      const width = image.width || image.naturalWidth;
-      const height = image.height || image.naturalHeight;
-
-      if (!width || !height) {
-        throw new Error(`Cannot determine the dimensions of ${file.name}.`);
-      }
-
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
-
-      if (!context) throw new Error("Your browser cannot prepare this image.");
-
-      let maxDimension = 1400;
-      let quality = 0.78;
-      let dataUrl = "";
-
-      for (let attempt = 0; attempt < 10; attempt++) {
-        const scale = Math.min(1, maxDimension / Math.max(width, height));
-        canvas.width = Math.max(1, Math.round(width * scale));
-        canvas.height = Math.max(1, Math.round(height * scale));
-
-        context.fillStyle = "#ffffff";
-        context.fillRect(0, 0, canvas.width, canvas.height);
-        context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-        dataUrl = canvas.toDataURL("image/jpeg", quality);
-
-        if (dataUrl.length <= 450000) break;
-
-        if (quality > 0.5) quality -= 0.08;
-        else maxDimension = Math.max(400, maxDimension - 150);
-      }
-
-      if (!dataUrl || dataUrl.length > 650000) {
-        throw new Error(
-          `${file.name} could not be compressed enough. Try a smaller screenshot.`
-        );
-      }
-
-      return { timeframe, image: dataUrl };
-    } finally {
-      if (image && typeof image.close === "function") image.close();
-    }
-  }
-
-  async function analyzeCharts() {
+  async function analyze() {
     if (busy) return;
-
-    if (!selectedFiles.length) {
-      setStatus("Please upload at least one chart screenshot.", "error");
+    if (!files.length) {
+      status("Upload at least one screenshot first.", "error");
       return;
     }
 
     const used = new Set();
-    for (const item of selectedFiles) {
-      if (!item.timeframe) {
-        setStatus("Choose a timeframe for every screenshot.", "error");
+    for (const item of files) {
+      if (!item.tf) {
+        status("Choose a timeframe for every screenshot.", "error");
         return;
       }
-      if (used.has(item.timeframe)) {
-        setStatus("Each screenshot must have a different timeframe.", "error");
+      if (used.has(item.tf)) {
+        status("Each screenshot must have a different timeframe.", "error");
         return;
       }
-      used.add(item.timeframe);
+      used.add(item.tf);
     }
 
     busy = true;
-    const report = getReport();
-    report.hidden = false;
-    report.replaceChildren(makeElement("h2", "ColloAI Analysis"));
+    const box = reportBox();
+    box.hidden = false;
+    box.replaceChildren(el("h2", "ColloAI Analysis"));
 
-    const analyzeButton = Array.from(document.querySelectorAll("button"))
-      .find(button => /analyze my charts/i.test(button.textContent || ""));
+    const button = Array.from(document.querySelectorAll("button"))
+      .find(b => /analyze my charts/i.test(b.textContent || ""));
 
-    if (analyzeButton) {
-      analyzeButton.disabled = true;
-      analyzeButton.dataset.originalText = analyzeButton.textContent;
-      analyzeButton.textContent = "Analyzing…";
+    if (button) {
+      button.disabled = true;
+      button.dataset.oldText = button.textContent;
+      button.textContent = "Analyzing…";
     }
 
     try {
       const charts = [];
+      let totalChars = 0;
 
-      for (const item of selectedFiles) {
-        setStatus(`Preparing ${item.timeframe} screenshot…`);
-        charts.push(await compressImage(item.file, item.timeframe));
+      for (const item of files) {
+        status(`Reading original ${item.tf} screenshot…`);
+        const image = await readOriginal(item.file);
+        totalChars += image.length;
+        charts.push({ timeframe: item.tf, image });
       }
 
-      charts.sort((a, b) =>
-        TIMEFRAMES.findIndex(tf => tf.code === a.timeframe) -
-        TIMEFRAMES.findIndex(tf => tf.code === b.timeframe)
-      );
-
-      const total = charts.reduce((sum, chart) => sum + chart.image.length, 0);
-      if (total > MAX_TOTAL_IMAGE_CHARS) {
-        throw new Error("Images are too large together. Upload fewer screenshots.");
+      // Vercel functions commonly enforce a request body limit.
+      // Stop early instead of sending a request likely to be rejected.
+      if (totalChars > 3000000) {
+        throw new Error(
+          "These original screenshots are too large to send together. Try fewer screenshots or smaller screenshots."
+        );
       }
+
+      status("Sending original screenshots to the AI engine…");
 
       const response = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          symbol: readSymbol(),
-          mode: readMode(),
-          currentPrice: readPrice(),
+          symbol: symbol(),
+          mode: mode(),
+          currentPrice: price(),
           charts
         })
       });
 
       const result = await response.json().catch(() => ({}));
-
       if (!response.ok) {
         throw new Error(result.error || `Analysis request failed (${response.status}).`);
       }
-
-      if (!result.report || typeof result.report !== "string") {
+      if (typeof result.report !== "string" || !result.report.trim()) {
         throw new Error("The AI returned an empty report.");
       }
 
-      displayReport(result);
+      showReport(result);
       saveReport({
         symbol: result.symbol,
         mode: result.mode,
@@ -457,55 +328,51 @@
         timestamp: result.timestamp || new Date().toISOString(),
         analyzedTimeframes: result.analyzedTimeframes || charts.map(c => c.timeframe)
       });
-
-      setStatus("Analysis completed successfully.", "success");
+      status("Analysis completed.", "success");
     } catch (error) {
-      report.replaceChildren(
-        makeElement("h2", "Analysis could not be completed"),
-        makeElement("p", error.message || "Unknown error.", "colloai-error")
+      box.replaceChildren(
+        el("h2", "Analysis could not be completed"),
+        el("p", error.message || "Unknown error.", "colloai-error")
       );
-      setStatus(error.message || "Please try again.", "error");
+      status(error.message || "Please try again.", "error");
     } finally {
       busy = false;
-      if (analyzeButton) {
-        analyzeButton.disabled = false;
-        analyzeButton.textContent =
-          analyzeButton.dataset.originalText || "Analyze my charts";
+      if (button) {
+        button.disabled = false;
+        button.textContent = button.dataset.oldText || "Analyze my charts";
       }
     }
   }
 
-  function displayReport(result) {
-    const report = getReport();
-    report.hidden = false;
-    report.replaceChildren(
-      makeElement("h2", "ColloAI Analysis Report"),
-      makeElement(
-        "p",
+  function showReport(result) {
+    const box = reportBox();
+    box.hidden = false;
+    box.replaceChildren(
+      el("h2", "ColloAI Analysis Report"),
+      el("p",
         `Instrument: ${result.symbol} | Mode: ${result.mode} | ` +
         new Date(result.timestamp || Date.now()).toLocaleString(),
         "colloai-muted"
       ),
-      makeElement("pre", result.report)
+      el("pre", result.report)
     );
 
-    const copy = makeElement("button", "Copy report");
+    const copy = el("button", "Copy report");
     copy.type = "button";
     copy.addEventListener("click", async () => {
       try {
         await navigator.clipboard.writeText(result.report);
-        setStatus("Report copied.", "success");
+        status("Report copied.", "success");
       } catch {
-        setStatus("Clipboard blocked. Select and copy the report manually.", "error");
+        status("Clipboard unavailable. Select and copy the report manually.", "error");
       }
     });
 
-    const historyButton = makeElement("button", "View saved reports");
+    const historyButton = el("button", "View saved reports");
     historyButton.type = "button";
     historyButton.addEventListener("click", showHistory);
-
-    report.append(copy, historyButton);
-    report.scrollIntoView({ behavior: "smooth", block: "start" });
+    box.append(copy, historyButton);
+    box.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function saveReport(item) {
@@ -514,14 +381,14 @@
       history.unshift(item);
       localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 10)));
     } catch (error) {
-      console.warn("Could not save report:", error);
+      console.warn("Could not save report history:", error);
     }
   }
 
   function showHistory() {
-    const report = getReport();
-    report.hidden = false;
-    report.replaceChildren(makeElement("h2", "Saved Reports"));
+    const box = reportBox();
+    box.hidden = false;
+    box.replaceChildren(el("h2", "Saved Reports"));
 
     let history = [];
     try {
@@ -529,73 +396,67 @@
     } catch {}
 
     if (!history.length) {
-      report.appendChild(makeElement("p", "No saved reports yet."));
+      box.append(el("p", "No saved reports yet."));
       return;
     }
 
     history.forEach(item => {
-      const card = makeElement("div", "", "colloai-file-card");
-      card.appendChild(makeElement("strong", `${item.symbol} — ${item.mode}`));
-      card.appendChild(makeElement(
-        "p",
-        new Date(item.timestamp).toLocaleString(),
-        "colloai-muted"
-      ));
-
-      const open = makeElement("button", "Open report");
+      const card = el("div", "", "colloai-file-card");
+      card.append(
+        el("strong", `${item.symbol} — ${item.mode}`),
+        el("p", new Date(item.timestamp).toLocaleString(), "colloai-muted")
+      );
+      const open = el("button", "Open report");
       open.type = "button";
-      open.addEventListener("click", () => displayReport(item));
-      card.appendChild(open);
-      report.appendChild(card);
+      open.addEventListener("click", () => showReport(item));
+      card.append(open);
+      box.append(card);
     });
   }
 
-  function initialize() {
-    addStyles();
+  function init() {
+    styles();
+    const fileInput = input();
 
-    const input = findFileInput();
-    if (!input) {
-      setStatus("Upload control not found. Check the file input in index.html.", "error");
+    if (!fileInput) {
+      status("Upload control not found. Check index.html.", "error");
       return;
     }
 
-    input.multiple = true;
-    input.accept = "image/jpeg,image/png,image/webp";
+    fileInput.multiple = true;
+    fileInput.accept = "image/jpeg,image/png,image/webp";
 
-    input.addEventListener("change", event => {
-      acceptFiles(event.target.files);
-      input.value = "";
+    fileInput.addEventListener("change", event => {
+      accept(event.target.files);
+      fileInput.value = "";
     });
 
     const button = Array.from(document.querySelectorAll("button"))
-      .find(item => /analyze my charts/i.test(item.textContent || ""));
+      .find(b => /analyze my charts/i.test(b.textContent || ""));
 
     if (button) {
       button.addEventListener("click", event => {
         event.preventDefault();
-        analyzeCharts();
+        analyze();
       });
     }
 
-    const form = input.closest("form");
+    const form = fileInput.closest("form");
     if (form) {
       form.addEventListener("submit", event => {
         event.preventDefault();
-        analyzeCharts();
+        analyze();
       });
     }
 
-    getFileList();
-    getReport();
-    setStatus("Upload 1–7 screenshots, assign timeframes, then analyze.");
-    console.log("ColloAI initialized.");
+    fileList();
+    reportBox();
+    status("Upload 1–7 screenshots, select their timeframes, then analyze.");
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initialize);
+    document.addEventListener("DOMContentLoaded", init);
   } else {
-    initialize();
+    init();
   }
 })();
-
-
