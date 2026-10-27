@@ -1,0 +1,77 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0b1020">
+  <title>ColloAI | Trading Analyst</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">COLLO<span>AI</span></a>
+    <span class="status">AI ANALYST</span>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <p class="eyebrow">MULTI-TIMEFRAME INTELLIGENCE</p>
+      <h1>Trade with <span>evidence.</span></h1>
+      <p class="subtitle">
+        Analyze your charts with SMC, ICT, support and resistance,
+        Fibonacci and other technical methods.
+      </p>
+    </section>
+
+    <section class="panel">
+      <h2>Configure your analysis</h2>
+
+      <label for="symbol">Trading instrument</label>
+      <select id="symbol">
+        <option value="XAUUSD">XAU/USD — Gold</option>
+        <option value="EURUSD">EUR/USD</option>
+        <option value="GBPUSD">GBP/USD</option>
+        <option value="BTCUSD">BTC/USD</option>
+      </select>
+
+      <label for="mode">Trading style</label>
+      <select id="mode">
+        <option value="Scalping">Scalping</option>
+        <option value="Intraday">Intraday</option>
+        <option value="Swing">Swing trading</option>
+      </select>
+
+      <label for="charts">Upload timeframe screenshots</label>
+      <p class="hint">
+        Select all seven chart images. Choose the correct timeframe
+        for each image in the next stage.
+      </p>
+
+      <div class="upload">
+        <input id="charts" type="file"
+          accept="image/png,image/jpeg,image/webp" multiple>
+      </div>
+
+      <p id="fileStatus" class="hint">No screenshots selected.</p>
+
+      <button id="analyzeBtn" type="button">
+        Analyze my charts
+      </button>
+
+      <p class="disclaimer">
+        Analysis is not a guarantee of future market movements.
+        No trade is guaranteed to win.
+      </p>
+    </section>
+
+    <section id="results" class="panel" hidden>
+      <h2>Analysis report</h2>
+      <pre id="report"></pre>
+    </section>
+  </main>
+
+  <footer>COLLOAI · Evidence before execution</footer>
+  <script src="app.js"></script>
+</body>
+</html>
